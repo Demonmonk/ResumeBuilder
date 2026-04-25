@@ -82,17 +82,23 @@ async function handleFileUpload(file) {
   try {
     const ext = file.name.split('.').pop().toLowerCase();
 
-    if (ext === 'docx' || ext === 'doc') {
-      // Parse DOCX client-side — free, preserves format for downloads
+    if (ext === 'docx') {
+      // Parse DOCX client-side and keep the original binary for format-preserving output
       showMsg('resume', 'loading', 'Reading Word document…');
-      const b64  = await readFileAsBase64(file);
+      const b64 = await readFileAsBase64(file);
       const text = await extractDocxText(b64); // from docx-editor.js
-      if (!text || text.trim().length < 50) throw new Error('Could not extract text from this Word file. Try pasting below instead.');
+      if (!text || text.trim().length < 50) throw new Error('Could not extract text from this DOCX file. Try pasting below instead.');
       docxBase64 = b64; // save for format-preserving downloads
       showMsg('resume', 'loading', 'Claude is structuring your resume…');
       const resp = await chrome.runtime.sendMessage({ type:'EXTRACT_RESUME', resumeText: text });
       if (!resp.ok) throw new Error(resp.error);
       finishUpload(file.name, resp.data);
+      return;
+    }
+
+    if (ext === 'doc') {
+      // Legacy .doc is binary; we cannot reliably preserve formatting client-side
+      showMsg('resume', 'error', 'Legacy .doc files do not support format-preserving edits. Please upload .docx to preserve formatting exactly.');
       return;
     }
 
