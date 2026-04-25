@@ -292,7 +292,7 @@ async function regenerateCover(id) {
         'anthropic-dangerous-direct-browser-access': 'true'
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-5',
+        model: 'claude-sonnet-4-6',
         max_tokens: 1000,
         system: 'You are an expert cover letter writer. Rewrite based on the instruction. Max 3 short paragraphs. Return ONLY the cover letter text.',
         messages: [{ role:'user', content:
@@ -349,5 +349,16 @@ function timeAgo(ts) {
   if (d < 86400000) return `${Math.floor(d/3600000)}h ago`;
   return `${Math.floor(d/86400000)}d ago`;
 }
+
+document.getElementById('btn-export-profile').addEventListener('click', async () => {
+  const data = await chrome.storage.local.get(['profile', 'api_key']);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'wingman-backup.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
 init();

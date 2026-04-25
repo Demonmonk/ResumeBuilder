@@ -2,7 +2,8 @@
 // Handles: job queue, Claude API, badge, screenshot+vision form fill
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-opus-4-5';
+const MODEL_GENERATE = 'claude-sonnet-4-6';       // smart tailoring — 5× cheaper than Opus
+const MODEL_EXTRACT  = 'claude-haiku-4-5-20251001'; // dumb extraction — ~20× cheaper than Opus
 
 // ── Badge helper ──────────────────────────────────────────────────────────────
 async function updateBadge() {
@@ -21,21 +22,22 @@ async function updateBadge() {
 }
 
 // ── Claude API call ───────────────────────────────────────────────────────────
-async function callClaude(apiKey, messages, system, maxTokens = 4096) {
+async function callClaude(apiKey, messages, system, maxTokens = 4096, model = MODEL_GENERATE) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+    'anthropic-dangerous-direct-browser-access': 'true'
+  };
+  // Enable prompt caching when cache_control is used in system or messages
+  const hasCacheControl = (Array.isArray(system) && system.some(b => b.cache_control)) ||
+    messages.some(m => Array.isArray(m.content) && m.content.some(b => b.cache_control));
+  if (hasCacheControl) headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
+
   const resp = await fetch(CLAUDE_API, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      system,
-      messages
-    })
+    headers,
+    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages })
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -53,7 +55,10 @@ function parseJSON(raw) {
 
 // ── Generate tailored resume + cover letter ───────────────────────────────────
 async function generateApplication(apiKey, profile, application) {
-  const system = `You are an expert career coach and technical writer for PM/tech roles.
+  // System prompt cached — same for every job
+  const system = [{
+    type: 'text',
+    text: `You are an expert career coach and technical writer for PM/tech roles.
 Given a job description and a candidate profile, produce:
 1. A tailored resume — same content, reordered and reworded to match the JD's language and priorities. ATS-optimised. No lies, no fluff.
 2. A punchy cover letter — max 3 short paragraphs. No "I am writing to express my interest". Hook → evidence → close.
@@ -73,14 +78,12 @@ Return ONLY valid JSON, no markdown fences:
       "type": "reframe or new"
     }
   ]
-}`;
+}`,
+    cache_control: { type: 'ephemeral' }
+  }];
 
-  const user = `JOB: ${application.job_title} at ${application.company}
-
-=== JOB DESCRIPTION ===
-${application.raw_jd.slice(0, 6000)}
-
-=== CANDIDATE PROFILE ===
+  // Profile + master resume cached — stable across all jobs for this user
+  const profileBlock = `=== CANDIDATE PROFILE ===
 Name: ${profile.name}
 Email: ${profile.email}
 Phone: ${profile.phone}
@@ -91,7 +94,19 @@ Target locations: ${profile.target_locations}
 === MASTER RESUME ===
 ${profile.master_resume}`;
 
-  const raw = await callClaude(apiKey, [{ role: 'user', content: user }], system, 8000);
+  // Job description NOT cached — changes every call
+  const jobBlock = `JOB: ${application.job_title} at ${application.company}
+
+=== JOB DESCRIPTION ===
+${application.raw_jd.slice(0, 6000)}`;
+
+  const raw = await callClaude(apiKey, [{
+    role: 'user',
+    content: [
+      { type: 'text', text: profileBlock, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: jobBlock }
+    ]
+  }], system, 8000, MODEL_GENERATE);
   return parseJSON(raw);
 }
 
@@ -204,7 +219,7 @@ Fill in this application form:`;
         { type: 'text', text: user }
       ]
     }
-  ], system);
+  ], system, 2000, MODEL_GENERATE);
 
   return parseJSON(raw);
 }
@@ -324,7 +339,7 @@ Return ONLY valid JSON:
 }`;
         const raw = await callClaude(api_key, [
           { role: 'user', content: msg.linkedinText }
-        ], system);
+        ], system, 4000, MODEL_EXTRACT);
         sendResponse({ ok: true, data: parseJSON(raw) });
       } catch (err) {
         sendResponse({ ok: false, error: err.message });
@@ -351,7 +366,7 @@ Return ONLY valid JSON with no markdown fences:
             { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: msg.base64 } },
             { type: 'text', text: 'Extract this resume in full. Reproduce every bullet point and section exactly.' }
           ]}
-        ], system, 8000);
+        ], system, 4000, MODEL_EXTRACT);
         sendResponse({ ok: true, data: parseJSON(raw) });
       } catch (err) {
         sendResponse({ ok: false, error: err.message });
@@ -375,7 +390,7 @@ Return ONLY valid JSON with no markdown fences:
 }`;
         const raw = await callClaude(api_key, [
           { role: 'user', content: msg.resumeText }
-        ], system, 8000);
+        ], system, 4000, MODEL_EXTRACT);
         sendResponse({ ok: true, data: parseJSON(raw) });
       } catch (err) {
         sendResponse({ ok: false, error: err.message });
