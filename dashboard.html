@@ -303,6 +303,77 @@ body {
 .regen-input:focus { border-color: #6366f1; }
 .regen-input::placeholder { color: #444; }
 
+/* Suggested bullets */
+.bullet-card {
+  background: #0c0c14;
+  border: 1px solid #1e1e2a;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+
+.bullet-card-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.bullet-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.badge-reframe { background: #12101f; color: #818cf8; border: 1px solid #2a2060; }
+.badge-new     { background: #0f1f12; color: #4ade80; border: 1px solid #1a3a20; }
+
+.bullet-context {
+  font-size: 12px;
+  color: #555;
+  line-height: 1.5;
+}
+
+.bullet-text {
+  font-size: 13px;
+  color: #c4c4d0;
+  line-height: 1.6;
+  margin-bottom: 10px;
+  background: #13131a;
+  border: 1px solid #1e1e2a;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.btn-copy-bullet {
+  background: transparent;
+  color: #6366f1;
+  border: 1px solid #2a2060;
+  font-size: 11px;
+  padding: 5px 10px;
+}
+
+.btn-copy-bullet:hover { background: #12101f; }
+
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #6366f1;
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 /* Processing state */
 .processing-state {
   display: flex;

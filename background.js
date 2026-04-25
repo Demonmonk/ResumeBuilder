@@ -21,7 +21,7 @@ async function updateBadge() {
 }
 
 // ── Claude API call ───────────────────────────────────────────────────────────
-async function callClaude(apiKey, messages, system) {
+async function callClaude(apiKey, messages, system, maxTokens = 4096) {
   const resp = await fetch(CLAUDE_API, {
     method: 'POST',
     headers: {
@@ -32,7 +32,7 @@ async function callClaude(apiKey, messages, system) {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       system,
       messages
     })
@@ -57,12 +57,22 @@ async function generateApplication(apiKey, profile, application) {
 Given a job description and a candidate profile, produce:
 1. A tailored resume — same content, reordered and reworded to match the JD's language and priorities. ATS-optimised. No lies, no fluff.
 2. A punchy cover letter — max 3 short paragraphs. No "I am writing to express my interest". Hook → evidence → close.
+3. Suggested bullets — 5-8 specific bullet points the candidate could add to strengthen their resume for this role. Two types:
+   - "reframe": takes real experience already in their resume and rewrites it using the JD's exact language/framing to make the match obvious
+   - "new": a plausible, credible bullet the candidate may have genuinely done but didn't mention, based on their career level and trajectory — written to address a gap the JD requires. Include realistic metrics. Never fabricate company names or titles.
 
 Return ONLY valid JSON, no markdown fences:
 {
   "key_matches": ["5-7 short bullets of why this person fits this role"],
   "tailored_resume": "full resume text, plain text, preserve structure",
-  "cover_letter": "cover letter text"
+  "cover_letter": "cover letter text",
+  "suggested_bullets": [
+    {
+      "context": "one sentence: what JD requirement this addresses and why it helps",
+      "bullet": "the full bullet point text, ready to paste into a resume",
+      "type": "reframe or new"
+    }
+  ]
 }`;
 
   const user = `JOB: ${application.job_title} at ${application.company}
@@ -81,7 +91,7 @@ Target locations: ${profile.target_locations}
 === MASTER RESUME ===
 ${profile.master_resume}`;
 
-  const raw = await callClaude(apiKey, [{ role: 'user', content: user }], system);
+  const raw = await callClaude(apiKey, [{ role: 'user', content: user }], system, 8000);
   return parseJSON(raw);
 }
 
@@ -120,6 +130,7 @@ async function processJob(jobId) {
       tailored_resume: result.tailored_resume,
       cover_letter: result.cover_letter,
       key_matches: result.key_matches,
+      suggested_bullets: result.suggested_bullets || [],
       resume_diff: buildDiff(profile.master_resume, result.tailored_resume),
       processed_at: Date.now()
     };
@@ -324,21 +335,23 @@ Return ONLY valid JSON:
     // ── Extract resume from PDF (base64) ────────────────────────────────────────
     if (msg.type === 'EXTRACT_RESUME_PDF') {
       try {
-        const system = `Extract all details from this PDF resume. Return ONLY valid JSON with no markdown:
+        const system = `Extract every detail from this PDF resume. Copy content verbatim — do NOT summarise, shorten, or rewrite anything.
+
+Return ONLY valid JSON with no markdown fences:
 {
   "name": "full name",
   "email": "email address or empty string",
   "phone": "phone number or empty string",
   "linkedin": "linkedin URL or empty string",
   "location": "city/country or empty string",
-  "master_resume": "the complete resume as clean formatted plain text, preserving all sections, bullets, dates, and content"
+  "master_resume": "the COMPLETE resume as plain text. Preserve every section heading, every bullet point word-for-word, all dates, company names, job titles, metrics, and technologies. Do not skip or compress anything."
 }`;
         const raw = await callClaude(api_key, [
           { role: 'user', content: [
             { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: msg.base64 } },
-            { type: 'text', text: 'Extract and structure this resume.' }
+            { type: 'text', text: 'Extract this resume in full. Reproduce every bullet point and section exactly.' }
           ]}
-        ], system);
+        ], system, 8000);
         sendResponse({ ok: true, data: parseJSON(raw) });
       } catch (err) {
         sendResponse({ ok: false, error: err.message });
@@ -349,18 +362,20 @@ Return ONLY valid JSON:
     // ── Extract resume from PDF text ──────────────────────────────────────────
     if (msg.type === 'EXTRACT_RESUME') {
       try {
-        const system = `Extract all details from this resume and return ONLY valid JSON with no markdown:
+        const system = `Extract every detail from this resume. Copy content verbatim — do NOT summarise, shorten, or rewrite anything.
+
+Return ONLY valid JSON with no markdown fences:
 {
   "name": "full name",
   "email": "email address or empty string",
   "phone": "phone number or empty string",
   "linkedin": "linkedin URL or empty string",
   "location": "city/country or empty string",
-  "master_resume": "the complete resume as clean formatted plain text, preserving all sections, bullets, dates, and content"
+  "master_resume": "the COMPLETE resume as plain text. Preserve every section heading, every bullet point word-for-word, all dates, company names, job titles, metrics, and technologies. Do not skip or compress anything."
 }`;
         const raw = await callClaude(api_key, [
           { role: 'user', content: msg.resumeText }
-        ], system);
+        ], system, 8000);
         sendResponse({ ok: true, data: parseJSON(raw) });
       } catch (err) {
         sendResponse({ ok: false, error: err.message });

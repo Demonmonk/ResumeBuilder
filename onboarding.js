@@ -100,7 +100,11 @@ async function handleFileUpload(file) {
       // Detect binary garbage — if >15% chars are non-printable, it's not readable text
       const nonPrintable = (text.match(/[\x00-\x08\x0E-\x1F\x7F-\xFF]/g) || []).length;
       if (nonPrintable / text.length > 0.15) {
-        showMsg('resume', 'error', "Can't read this file as text — it's probably a binary PDF. Use the paste box above instead: open your CV, select all, copy, paste.");
+        const ext = file.name.split('.').pop().toLowerCase();
+        const hint = ext === 'docx' || ext === 'doc'
+          ? 'Open it in Word, select all (Ctrl+A), copy, then paste below.'
+          : 'Save it as a PDF or plain text, or open it, select all, copy, and paste below.';
+        showMsg('resume', 'error', `Can't read "${file.name}" as text — it's a binary file. ${hint}`);
         return;
       }
     }

@@ -44,6 +44,15 @@ async function init() {
     if (action === 'copy-cover')    copyToClipboard('cover-editor');
     if (action === 'dl-cover')      downloadText(id, 'cover');
     if (action === 'dl-resume')     downloadText(id, 'resume');
+    if (action === 'copy-bullet') {
+      const idx = parseInt(btn.dataset.idx, 10);
+      const app = applications.find(a => a.id === selectedId);
+      if (app?.suggested_bullets?.[idx]) {
+        navigator.clipboard.writeText(app.suggested_bullets[idx].bullet);
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+      }
+    }
   });
 
   // Tab delegation on main panel
@@ -164,6 +173,7 @@ function renderDetail(app) {
         <div class="tab ${activeTab==='matches' ?'active':''}" data-tab="matches">Why you fit</div>
         <div class="tab ${activeTab==='resume'  ?'active':''}" data-tab="resume">Resume diff</div>
         <div class="tab ${activeTab==='cover'   ?'active':''}" data-tab="cover">Cover letter</div>
+        <div class="tab ${activeTab==='bullets' ?'active':''}" data-tab="bullets">Suggested bullets ${(app.suggested_bullets||[]).length ? `<span class="tab-count">${app.suggested_bullets.length}</span>` : ''}</div>
         <div class="tab ${activeTab==='jd'      ?'active':''}" data-tab="jd">Job description</div>
       </div>
 
@@ -193,6 +203,22 @@ function renderDetail(app) {
           <button class="btn btn-skip" style="flex:1" data-action="copy-cover">Copy</button>
           <button class="btn btn-skip" style="flex:1" data-action="dl-cover" data-id="${app.id}">Download</button>
         </div>
+      </div>
+
+      <div class="tab-content ${activeTab==='bullets'?'active':''}" id="tab-bullets">
+        <div class="section-label">Bullets to add or swap into your resume — reframes of existing work or credible additions for gaps</div>
+        ${(app.suggested_bullets||[]).length === 0
+          ? `<div style="color:#555;font-size:13px;padding:16px 0">No suggested bullets yet — retry processing to regenerate.</div>`
+          : (app.suggested_bullets||[]).map((b, i) => `
+            <div class="bullet-card">
+              <div class="bullet-card-top">
+                <span class="bullet-type-badge ${b.type === 'new' ? 'badge-new' : 'badge-reframe'}">${b.type === 'new' ? 'New addition' : 'Reframe'}</span>
+                <span class="bullet-context">${esc(b.context)}</span>
+              </div>
+              <div class="bullet-text">${esc(b.bullet)}</div>
+              <button class="btn btn-copy-bullet" data-action="copy-bullet" data-idx="${i}">Copy</button>
+            </div>
+          `).join('')}
       </div>
 
       <div class="tab-content ${activeTab==='jd'?'active':''}" id="tab-jd">
