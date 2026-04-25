@@ -226,6 +226,7 @@ async function finish() {
     linkedin:         document.getElementById('linkedin-url').value.trim(),
     target_roles:     document.getElementById('p-roles').value.trim(),
     target_locations: document.getElementById('p-locations').value.trim(),
+    target_pages:     parseInt(document.getElementById('p-pages').value, 10) || 1,
     master_resume:    masterResume
   };
 

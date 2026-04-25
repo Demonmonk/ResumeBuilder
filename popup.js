@@ -38,13 +38,6 @@ async function init() {
     // Not a job page — fine
   }
 
-  // Check if there's a ready app for this URL (enable fill button)
-  const { applications = [] } = await chrome.storage.local.get('applications');
-  const approved = applications.find(a => a.url === tab.url && a.status === 'approved');
-  if (approved) {
-    document.getElementById('btn-fill').disabled = false;
-    document.getElementById('btn-fill').dataset.appId = approved.id;
-  }
 }
 
 async function loadStats() {
@@ -75,24 +68,6 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('btn-fill').addEventListener('click', async () => {
-  const appId = document.getElementById('btn-fill').dataset.appId;
-  document.getElementById('btn-fill').disabled = true;
-  document.getElementById('btn-fill').textContent = 'Analysing form…';
-
-  const resp = await chrome.runtime.sendMessage({
-    type: 'START_FORM_FILL',
-    applicationId: appId
-  });
-
-  if (resp.ok) {
-    showStatus('saved', `✓ Filled ${resp.fieldCount} fields — review then submit.`);
-  } else {
-    showStatus('error', resp.error || 'Fill failed');
-  }
-  document.getElementById('btn-fill').disabled = false;
-  document.getElementById('btn-fill').textContent = 'Fill application form';
-});
 
 document.getElementById('btn-skip').addEventListener('click', () => window.close());
 

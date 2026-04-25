@@ -53,48 +53,57 @@ function parseJSON(raw) {
   return JSON.parse(clean);
 }
 
-// ── Generate tailored resume + cover letter ───────────────────────────────────
+// ── Generate targeted resume changes + cover letter ───────────────────────────
 async function generateApplication(apiKey, profile, application) {
-  // System prompt cached — same for every job
+  const targetPages = profile.target_pages || 1;
+
+  // System prompt cached — identical for every job
   const system = [{
     type: 'text',
-    text: `You are an expert career coach and technical writer for PM/tech roles.
-Given a job description and a candidate profile, produce:
-1. A tailored resume — same content, reordered and reworded to match the JD's language and priorities. ATS-optimised. No lies, no fluff.
-2. A punchy cover letter — max 3 short paragraphs. No "I am writing to express my interest". Hook → evidence → close.
-3. Suggested bullets — 5-8 specific bullet points the candidate could add to strengthen their resume for this role. Two types:
-   - "reframe": takes real experience already in their resume and rewrites it using the JD's exact language/framing to make the match obvious
-   - "new": a plausible, credible bullet the candidate may have genuinely done but didn't mention, based on their career level and trajectory — written to address a gap the JD requires. Include realistic metrics. Never fabricate company names or titles.
+    text: `You are a career coach helping optimise resumes for specific job applications.
+Return ONLY the minimum targeted changes needed — do NOT rewrite the whole resume.
 
 Return ONLY valid JSON, no markdown fences:
 {
-  "key_matches": ["5-7 short bullets of why this person fits this role"],
-  "tailored_resume": "full resume text, plain text, preserve structure",
-  "cover_letter": "cover letter text",
-  "suggested_bullets": [
+  "key_matches": ["5-7 bullets: why this person is a strong fit for this specific role"],
+  "cover_letter": "3 short punchy paragraphs. Hook → evidence → close. Never start with 'I am writing to express'.",
+  "changes": [
     {
-      "context": "one sentence: what JD requirement this addresses and why it helps",
-      "bullet": "the full bullet point text, ready to paste into a resume",
-      "type": "reframe or new"
+      "section": "section name e.g. Experience",
+      "original": "exact verbatim text from the resume to replace",
+      "suggested": "improved version using the JD's language and keywords",
+      "reason": "one sentence: why this swap helps"
+    }
+  ],
+  "additions": [
+    {
+      "section": "Skills|Experience|Summary|etc",
+      "context": "where to add, e.g. 'under Acme Corp role' or 'end of Skills section'",
+      "bullet": "the complete new bullet or line to add",
+      "reason": "what JD gap this fills",
+      "type": "reframe|new"
     }
   ]
-}`,
+}
+
+Rules:
+- Maximum 6 items total across changes + additions — focus on highest ROI only
+- "original" must be an exact verbatim substring that appears in the master resume
+- Target: ${targetPages} page(s) — keep additions budget tight if already at limit
+- Never fabricate company names or job titles`,
     cache_control: { type: 'ephemeral' }
   }];
 
-  // Profile + master resume cached — stable across all jobs for this user
+  // Profile + master resume block — cached, same across all jobs for this user
   const profileBlock = `=== CANDIDATE PROFILE ===
 Name: ${profile.name}
-Email: ${profile.email}
-Phone: ${profile.phone}
-LinkedIn: ${profile.linkedin}
 Target roles: ${profile.target_roles}
-Target locations: ${profile.target_locations}
+Target pages: ${targetPages}
 
 === MASTER RESUME ===
 ${profile.master_resume}`;
 
-  // Job description NOT cached — changes every call
+  // Job description — NOT cached, changes every call
   const jobBlock = `JOB: ${application.job_title} at ${application.company}
 
 === JOB DESCRIPTION ===
@@ -106,27 +115,8 @@ ${application.raw_jd.slice(0, 6000)}`;
       { type: 'text', text: profileBlock, cache_control: { type: 'ephemeral' } },
       { type: 'text', text: jobBlock }
     ]
-  }], system, 8000, MODEL_GENERATE);
+  }], system, 3000, MODEL_GENERATE);
   return parseJSON(raw);
-}
-
-// ── Build resume diff (line-level) ────────────────────────────────────────────
-function buildDiff(original, modified) {
-  const aLines = original.split('\n');
-  const bLines = modified.split('\n');
-  const diff = [];
-  const maxLen = Math.max(aLines.length, bLines.length);
-  for (let i = 0; i < maxLen; i++) {
-    const a = aLines[i];
-    const b = bLines[i];
-    if (a === b) {
-      diff.push({ type: 'same', text: a ?? '' });
-    } else {
-      if (a !== undefined) diff.push({ type: 'removed', text: a });
-      if (b !== undefined) diff.push({ type: 'added', text: b });
-    }
-  }
-  return diff;
 }
 
 // ── Process a single job in the queue ────────────────────────────────────────
@@ -142,19 +132,14 @@ async function processJob(jobId) {
     applications[idx] = {
       ...applications[idx],
       status: 'ready',
-      tailored_resume: result.tailored_resume,
-      cover_letter: result.cover_letter,
-      key_matches: result.key_matches,
-      suggested_bullets: result.suggested_bullets || [],
-      resume_diff: buildDiff(profile.master_resume, result.tailored_resume),
-      processed_at: Date.now()
+      cover_letter:  result.cover_letter,
+      key_matches:   result.key_matches,
+      changes:       result.changes    || [],
+      additions:     result.additions  || [],
+      processed_at:  Date.now()
     };
   } catch (err) {
-    applications[idx] = {
-      ...applications[idx],
-      status: 'error',
-      error: err.message
-    };
+    applications[idx] = { ...applications[idx], status: 'error', error: err.message };
   }
 
   await chrome.storage.local.set({ applications });
@@ -163,65 +148,10 @@ async function processJob(jobId) {
   const ready = applications.filter(a => a.status === 'ready').length;
   if (ready > 0) {
     chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Wingman',
+      type: 'basic', iconUrl: 'icons/icon48.png', title: 'Wingman',
       message: `${ready} application${ready > 1 ? 's' : ''} ready to review`
     });
   }
-}
-
-// ── Vision-based form filler ──────────────────────────────────────────────────
-async function analyseFormWithVision(apiKey, profile, screenshotDataUrl, applicationId) {
-  const { applications = [] } = await chrome.storage.local.get('applications');
-  const app = applications.find(a => a.id === applicationId);
-
-  const base64 = screenshotDataUrl.replace(/^data:image\/\w+;base64,/, '');
-
-  const system = `You are an RPA agent filling out a job application form.
-Look at the screenshot carefully. Identify every visible input field, textarea, select, checkbox, or radio button.
-For each field, determine what value to fill based on the candidate profile provided.
-
-Return ONLY valid JSON, no markdown:
-{
-  "fields": [
-    {
-      "label": "exact label text visible on screen or placeholder",
-      "value": "what to fill in",
-      "type": "text|textarea|select|checkbox|radio|file",
-      "skip": false
-    }
-  ],
-  "notes": "any observations about the form"
-}
-
-For file upload fields (resume, CV): set type to "file" and value to "resume".
-For fields you don't have data for or should skip: set skip to true.
-For cover letter / additional info textareas: use the cover letter provided.`;
-
-  const user = `Candidate profile:
-Name: ${profile.name}
-Email: ${profile.email}
-Phone: ${profile.phone}
-LinkedIn: ${profile.linkedin}
-Location: ${profile.target_locations}
-
-Cover letter:
-${app?.cover_letter || ''}
-
-Fill in this application form:`;
-
-  const raw = await callClaude(apiKey, [
-    {
-      role: 'user',
-      content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } },
-        { type: 'text', text: user }
-      ]
-    }
-  ], system, 2000, MODEL_GENERATE);
-
-  return parseJSON(raw);
 }
 
 // ── Message router ────────────────────────────────────────────────────────────
@@ -289,25 +219,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await updateBadge();
         sendResponse({ ok: true });
         processJob(msg.id);
-      }
-      return;
-    }
-
-    // ── Start form fill (vision) ──────────────────────────────────────────────
-    if (msg.type === 'START_FORM_FILL') {
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const screenshot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-        const result = await analyseFormWithVision(api_key, profile, screenshot, msg.applicationId);
-        // Send instructions to content script
-        chrome.tabs.sendMessage(tab.id, {
-          type: 'FILL_FORM',
-          fields: result.fields,
-          applicationId: msg.applicationId
-        });
-        sendResponse({ ok: true, fieldCount: result.fields.length });
-      } catch (err) {
-        sendResponse({ ok: false, error: err.message });
       }
       return;
     }

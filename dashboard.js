@@ -1,8 +1,13 @@
-// dashboard.js — event delegation, zero inline onclick handlers
+// dashboard.js
 let applications = [];
 let selectedId   = null;
 let activeFilter = 'all';
 let activeTab    = 'matches';
+let profile      = {};
+
+// Per-job checkbox state (all accepted by default on first render)
+const acceptedChanges   = new Map(); // jobId → Set<index>
+const acceptedAdditions = new Map(); // jobId → Set<index>
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -18,7 +23,6 @@ async function init() {
     });
   });
 
-  // Event delegation on sidebar list
   document.getElementById('job-list').addEventListener('click', e => {
     const item = e.target.closest('.job-item');
     if (!item) return;
@@ -28,34 +32,48 @@ async function init() {
     if (app) renderDetail(app);
   });
 
-  // Event delegation on main panel
+  // Button clicks (approve, skip, download, etc.)
   document.getElementById('main').addEventListener('click', e => {
     const btn = e.target.closest('[data-action]');
-    if (!btn) return;
+    if (!btn || btn.tagName === 'INPUT') return;
     const action = btn.dataset.action;
     const id     = btn.dataset.id || selectedId;
-    if (action === 'approve')       approve(id);
-    if (action === 'mark-applied')  markApplied(id);
-    if (action === 'skip')          skipJob(id);
-    if (action === 'delete')        deleteJob(id);
-    if (action === 'retry')         retryJob(id);
-    if (action === 'open-job')      openJob(id);
-    if (action === 'regen-cover')   regenerateCover(id);
-    if (action === 'copy-cover')    copyToClipboard('cover-editor');
-    if (action === 'dl-cover')      downloadText(id, 'cover');
-    if (action === 'dl-resume')     downloadText(id, 'resume');
-    if (action === 'copy-bullet') {
-      const idx = parseInt(btn.dataset.idx, 10);
-      const app = applications.find(a => a.id === selectedId);
-      if (app?.suggested_bullets?.[idx]) {
-        navigator.clipboard.writeText(app.suggested_bullets[idx].bullet);
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-      }
-    }
+    if (action === 'approve')      approve(id);
+    if (action === 'mark-applied') markApplied(id);
+    if (action === 'skip')         skipJob(id);
+    if (action === 'delete')       deleteJob(id);
+    if (action === 'retry')        retryJob(id);
+    if (action === 'open-job')     openJob(id);
+    if (action === 'regen-cover')  regenerateCover(id);
+    if (action === 'copy-cover')   copyToClipboard('cover-editor');
+    if (action === 'dl-cover')     downloadCover(id);
+    if (action === 'dl-pdf')       downloadResume(id, 'pdf');
+    if (action === 'dl-word')      downloadResume(id, 'word');
   });
 
-  // Tab delegation on main panel
+  // Checkbox toggles for changes/additions
+  document.getElementById('main').addEventListener('change', e => {
+    const input = e.target;
+    if (!input.dataset.action) return;
+    const idx = parseInt(input.dataset.idx, 10);
+
+    if (input.dataset.action === 'toggle-change') {
+      const set = acceptedChanges.get(selectedId) || new Set();
+      input.checked ? set.add(idx) : set.delete(idx);
+      acceptedChanges.set(selectedId, set);
+    }
+    if (input.dataset.action === 'toggle-addition') {
+      const set = acceptedAdditions.get(selectedId) || new Set();
+      input.checked ? set.add(idx) : set.delete(idx);
+      acceptedAdditions.set(selectedId, set);
+    }
+
+    // Re-render just the page estimate area without full re-render
+    const app = applications.find(a => a.id === selectedId);
+    if (app) updatePageEstimate(app);
+  });
+
+  // Tab clicks
   document.getElementById('main').addEventListener('click', e => {
     const tab = e.target.closest('.tab');
     if (!tab || !tab.dataset.tab) return;
@@ -64,18 +82,30 @@ async function init() {
     if (app) renderDetail(app);
   });
 
-  // Cover letter save on blur (delegated)
+  // Cover letter autosave
   document.getElementById('main').addEventListener('blur', e => {
-    if (e.target.id === 'cover-editor') {
-      saveCoverLetter(selectedId, e.target.value);
-    }
+    if (e.target.id === 'cover-editor') saveCoverLetter(selectedId, e.target.value);
   }, true);
+
+  // Export profile backup button
+  document.getElementById('btn-export-profile').addEventListener('click', async () => {
+    const data = await chrome.storage.local.get(['profile', 'api_key']);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'wingman-backup.json'; a.click();
+    URL.revokeObjectURL(url);
+  });
 }
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 async function loadApps() {
-  const resp = await chrome.runtime.sendMessage({ type: 'GET_APPS' });
-  applications = (resp.applications || []).sort((a, b) => b.saved_at - a.saved_at);
+  const [appsResp, storage] = await Promise.all([
+    chrome.runtime.sendMessage({ type: 'GET_APPS' }),
+    chrome.storage.local.get('profile')
+  ]);
+  profile = storage.profile || {};
+  applications = (appsResp.applications || []).sort((a, b) => b.saved_at - a.saved_at);
   renderList();
   if (selectedId) {
     const app = applications.find(a => a.id === selectedId);
@@ -94,7 +124,6 @@ function renderList() {
     list.innerHTML = '<div class="empty-state">No jobs here yet.</div>';
     return;
   }
-
   list.innerHTML = filtered.map(app => `
     <div class="job-item ${app.id === selectedId ? 'selected' : ''}" data-id="${app.id}">
       <div class="job-item-title">${esc(app.job_title)}</div>
@@ -122,7 +151,7 @@ function renderDetail(app) {
         </div>
         <div class="processing-state">
           <div class="spinner"></div>
-          <div>Claude is tailoring your resume and writing your cover letter… ~20–30 seconds.</div>
+          <div>Analysing your resume against the JD… ~20–30 seconds.</div>
         </div>
       </div>`;
     return;
@@ -137,13 +166,11 @@ function renderDetail(app) {
             <div class="detail-company">${esc(app.company)}</div>
           </div>
           <div class="detail-actions">
-            <button class="btn btn-regen"   data-action="retry"  data-id="${app.id}">Retry</button>
-            <button class="btn btn-delete"  data-action="delete" data-id="${app.id}">Delete</button>
+            <button class="btn btn-regen" data-action="retry"  data-id="${app.id}">Retry</button>
+            <button class="btn btn-delete" data-action="delete" data-id="${app.id}">Delete</button>
           </div>
         </div>
-        <div style="padding:16px;background:#1f0d0d;border:1px solid #3a1010;border-radius:10px;color:#f87171;font-size:13px">
-          Error: ${esc(app.error || 'Unknown error')}
-        </div>
+        <div class="error-box">Error: ${esc(app.error || 'Unknown error')}</div>
       </div>`;
     return;
   }
@@ -151,6 +178,14 @@ function renderDetail(app) {
   const isReady    = app.status === 'ready';
   const isApproved = app.status === 'approved';
   const isApplied  = app.status === 'applied';
+
+  // Init accepted state for this job if first time seeing it
+  if (!acceptedChanges.has(app.id)) {
+    acceptedChanges.set(app.id, new Set((app.changes || []).map((_, i) => i)));
+  }
+  if (!acceptedAdditions.has(app.id)) {
+    acceptedAdditions.set(app.id, new Set((app.additions || []).map((_, i) => i)));
+  }
 
   main.innerHTML = `
     <div class="detail">
@@ -170,11 +205,10 @@ function renderDetail(app) {
       </div>
 
       <div class="tabs">
-        <div class="tab ${activeTab==='matches' ?'active':''}" data-tab="matches">Why you fit</div>
-        <div class="tab ${activeTab==='resume'  ?'active':''}" data-tab="resume">Resume diff</div>
-        <div class="tab ${activeTab==='cover'   ?'active':''}" data-tab="cover">Cover letter</div>
-        <div class="tab ${activeTab==='bullets' ?'active':''}" data-tab="bullets">Suggested bullets ${(app.suggested_bullets||[]).length ? `<span class="tab-count">${app.suggested_bullets.length}</span>` : ''}</div>
-        <div class="tab ${activeTab==='jd'      ?'active':''}" data-tab="jd">Job description</div>
+        <div class="tab ${activeTab==='matches'?'active':''}" data-tab="matches">Why you fit</div>
+        <div class="tab ${activeTab==='changes'?'active':''}" data-tab="changes">Resume changes</div>
+        <div class="tab ${activeTab==='cover'  ?'active':''}" data-tab="cover">Cover letter</div>
+        <div class="tab ${activeTab==='jd'     ?'active':''}" data-tab="jd">Job description</div>
       </div>
 
       <div class="tab-content ${activeTab==='matches'?'active':''}" id="tab-matches">
@@ -184,57 +218,222 @@ function renderDetail(app) {
         </div>
       </div>
 
-      <div class="tab-content ${activeTab==='resume'?'active':''}" id="tab-resume">
-        <div class="section-label">Changes — <span style="color:#4ade80">green = added</span> · <span style="color:#f87171">red = removed</span></div>
-        <div class="diff">${renderDiff(app.resume_diff||[])}</div>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-skip" style="flex:1" data-action="dl-resume" data-id="${app.id}">Download tailored resume</button>
-        </div>
+      <div class="tab-content ${activeTab==='changes'?'active':''}" id="tab-changes">
+        ${renderChangesTab(app)}
       </div>
 
       <div class="tab-content ${activeTab==='cover'?'active':''}" id="tab-cover">
-        <div class="section-label">Cover letter — edit directly, then approve</div>
+        <div class="section-label">Cover letter — edit directly</div>
         <textarea class="cover-letter-editor" id="cover-editor">${esc(app.cover_letter||'')}</textarea>
         <div class="regen-row">
-          <input class="regen-input" id="regen-note" placeholder='e.g. "Make it punchier" or "Emphasise Danaher more"'>
+          <input class="regen-input" id="regen-note" placeholder='e.g. "Make it punchier" or "Lead with the Danaher project"'>
           <button class="btn btn-regen" data-action="regen-cover" data-id="${app.id}">Regenerate ↺</button>
         </div>
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn btn-skip" style="flex:1" data-action="copy-cover">Copy</button>
-          <button class="btn btn-skip" style="flex:1" data-action="dl-cover" data-id="${app.id}">Download</button>
+          <button class="btn btn-skip" style="flex:1" data-action="dl-cover" data-id="${app.id}">Download .txt</button>
         </div>
-      </div>
-
-      <div class="tab-content ${activeTab==='bullets'?'active':''}" id="tab-bullets">
-        <div class="section-label">Bullets to add or swap into your resume — reframes of existing work or credible additions for gaps</div>
-        ${(app.suggested_bullets||[]).length === 0
-          ? `<div style="color:#555;font-size:13px;padding:16px 0">No suggested bullets yet — retry processing to regenerate.</div>`
-          : (app.suggested_bullets||[]).map((b, i) => `
-            <div class="bullet-card">
-              <div class="bullet-card-top">
-                <span class="bullet-type-badge ${b.type === 'new' ? 'badge-new' : 'badge-reframe'}">${b.type === 'new' ? 'New addition' : 'Reframe'}</span>
-                <span class="bullet-context">${esc(b.context)}</span>
-              </div>
-              <div class="bullet-text">${esc(b.bullet)}</div>
-              <button class="btn btn-copy-bullet" data-action="copy-bullet" data-idx="${i}">Copy</button>
-            </div>
-          `).join('')}
       </div>
 
       <div class="tab-content ${activeTab==='jd'?'active':''}" id="tab-jd">
         <div class="section-label">Original job description</div>
-        <div style="font-size:13px;color:#666;line-height:1.8;white-space:pre-wrap;max-height:480px;overflow-y:auto;background:#0c0c14;padding:16px;border-radius:10px;border:1px solid #1e1e2a">${esc(app.raw_jd||'')}</div>
+        <div class="jd-text">${esc(app.raw_jd||'')}</div>
       </div>
     </div>`;
 }
 
-function renderDiff(diff) {
-  if (!diff.length) return '<div class="diff-line diff-same">No diff available</div>';
-  return diff.map(l => {
-    if (l.type==='added')   return `<div class="diff-line diff-added">+ ${esc(l.text)}</div>`;
-    if (l.type==='removed') return `<div class="diff-line diff-removed">- ${esc(l.text)}</div>`;
-    return `<div class="diff-line diff-same">${esc(l.text)}</div>`;
-  }).join('');
+// ── Resume changes tab ────────────────────────────────────────────────────────
+function renderChangesTab(app) {
+  const changes   = app.changes   || [];
+  const additions = app.additions || [];
+  const chgSet    = acceptedChanges.get(app.id)   || new Set();
+  const addSet    = acceptedAdditions.get(app.id) || new Set();
+
+  const changesHtml = changes.map((c, i) => `
+    <label class="change-card ${chgSet.has(i) ? '' : 'dimmed'}">
+      <input type="checkbox" data-action="toggle-change" data-idx="${i}" ${chgSet.has(i) ? 'checked' : ''}>
+      <div class="change-body">
+        <div class="change-section-tag">${esc(c.section || '')}</div>
+        <div class="change-original">${esc(c.original || '')}</div>
+        <div class="change-arrow">↓  <span class="change-reason-inline">${esc(c.reason || '')}</span></div>
+        <div class="change-suggested">${esc(c.suggested || '')}</div>
+      </div>
+    </label>
+  `).join('');
+
+  const additionsHtml = additions.map((a, i) => `
+    <label class="change-card ${addSet.has(i) ? '' : 'dimmed'}">
+      <input type="checkbox" data-action="toggle-addition" data-idx="${i}" ${addSet.has(i) ? 'checked' : ''}>
+      <div class="change-body">
+        <div class="change-section-tag">
+          <span class="type-badge ${a.type === 'new' ? 'badge-new' : 'badge-reframe'}">${a.type === 'new' ? 'New' : 'Reframe'}</span>
+          ${esc(a.context || a.section || '')}
+        </div>
+        <div class="change-suggested">${esc(a.bullet || '')}</div>
+        <div class="addition-reason">${esc(a.reason || '')}</div>
+      </div>
+    </label>
+  `).join('');
+
+  if (!changes.length && !additions.length) {
+    return `<div style="color:#555;font-size:13px;padding:8px 0">No changes suggested — your resume already aligns well with this role.</div>
+      ${downloadButtons(app.id)}`;
+  }
+
+  return `
+    ${changes.length ? `<div class="section-label" style="margin-top:0">Swap these bullets <span style="color:#444;font-weight:400;text-transform:none;letter-spacing:0">(uncheck to keep original)</span></div>${changesHtml}` : ''}
+    ${additions.length ? `<div class="section-label" style="margin-top:${changes.length?'20px':'0'}">Add these bullets <span style="color:#444;font-weight:400;text-transform:none;letter-spacing:0">(uncheck to skip)</span></div>${additionsHtml}` : ''}
+    <div id="page-estimate-row">${pageEstimateHtml(app)}</div>
+    ${downloadButtons(app.id)}`;
+}
+
+function downloadButtons(id) {
+  return `<div class="download-row">
+    <button class="btn btn-dl" data-action="dl-pdf"  data-id="${id}">Save as PDF</button>
+    <button class="btn btn-dl" data-action="dl-word" data-id="${id}">Download Word (.doc)</button>
+  </div>`;
+}
+
+function pageEstimateHtml(app) {
+  const chgSet   = acceptedChanges.get(app.id)   || new Set();
+  const addSet   = acceptedAdditions.get(app.id) || new Set();
+  const pages    = estimatePages(app, chgSet, addSet);
+  const target   = profile.target_pages || 1;
+  const over     = pages > target + 0.15;
+  return over
+    ? `<div class="page-warning">⚠ ~${pages.toFixed(1)} pages — over your ${target}-page target. Deselect some items above.</div>`
+    : `<div class="page-ok">~${pages.toFixed(1)} pages &nbsp;·&nbsp; target: ${target}</div>`;
+}
+
+function updatePageEstimate(app) {
+  const el = document.getElementById('page-estimate-row');
+  if (el) el.innerHTML = pageEstimateHtml(app);
+}
+
+// ── Page estimation (rough: ~3000 chars per standard resume page) ─────────────
+function estimatePages(app, chgSet, addSet) {
+  let text = profile.master_resume || '';
+  (app.changes || []).forEach((c, i) => {
+    if (chgSet.has(i) && c.original) text = text.replace(c.original, c.suggested || '');
+  });
+  (app.additions || []).forEach((a, i) => {
+    if (addSet.has(i)) text += '\n' + (a.bullet || '');
+  });
+  return Math.max(0.1, text.replace(/\s+/g, ' ').trim().length / 3000);
+}
+
+// ── Build final resume text from selections ───────────────────────────────────
+function buildFinalResume(app) {
+  const chgSet = acceptedChanges.get(app.id)   || new Set();
+  const addSet = acceptedAdditions.get(app.id) || new Set();
+  let text = profile.master_resume || '';
+
+  (app.changes || []).forEach((c, i) => {
+    if (chgSet.has(i) && c.original) text = text.replace(c.original, c.suggested || '');
+  });
+
+  (app.additions || []).forEach((a, i) => {
+    if (!addSet.has(i)) return;
+    const bullet = /^[•\-\*]/.test((a.bullet||'').trim()) ? a.bullet : '• ' + a.bullet;
+    // Try to insert after the target section header
+    const sectionUpper = (a.section || '').toUpperCase().trim();
+    const textUpper    = text.toUpperCase();
+    const sectionIdx   = sectionUpper ? textUpper.indexOf(sectionUpper) : -1;
+    if (sectionIdx !== -1) {
+      const afterHeader = text.indexOf('\n', sectionIdx);
+      if (afterHeader !== -1) {
+        text = text.slice(0, afterHeader + 1) + bullet + '\n' + text.slice(afterHeader + 1);
+        return;
+      }
+    }
+    text += '\n' + bullet;
+  });
+
+  return text;
+}
+
+// ── HTML resume for print-to-PDF ──────────────────────────────────────────────
+function resumeToHtml(text) {
+  function isHeader(line) {
+    const t = line.trim();
+    return t.length > 1 && t.length < 60 && t === t.toUpperCase() && /[A-Z]/.test(t) && !/^[•\-\*]/.test(t);
+  }
+
+  let body = '';
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t)              { body += '<div class="gap"></div>'; continue; }
+    if (isHeader(t))     { body += `<div class="hd">${esc(t)}</div>`; continue; }
+    if (/^[•\-\*]/.test(t)) { body += `<div class="bl">${esc(t)}</div>`; continue; }
+    body += `<div class="ln">${esc(t)}</div>`;
+  }
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>Resume</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+@page{size:letter;margin:.75in}
+body{font-family:Arial,sans-serif;font-size:11pt;color:#000;line-height:1.45;background:#fff}
+.bar{background:#f0f0f0;border-bottom:1px solid #ccc;padding:10px 16px;display:flex;gap:10px;align-items:center}
+.bar button{padding:8px 20px;background:#000;color:#fff;border:none;border-radius:4px;font-size:13px;cursor:pointer;font-family:inherit}
+.bar small{font-size:11px;color:#666}
+.resume{padding:.5in .75in}
+.hd{font-weight:700;text-transform:uppercase;letter-spacing:.8px;border-bottom:1.5px solid #000;margin:12pt 0 4pt;padding-bottom:2pt;font-size:10pt}
+.bl{padding-left:12pt;margin:2pt 0}
+.ln{margin:2pt 0}
+.gap{height:5pt}
+@media print{.bar{display:none}.resume{padding:0}}
+</style></head><body>
+<div class="bar">
+  <button onclick="window.print()">Save as PDF</button>
+  <small>Print dialog → Destination → Save as PDF</small>
+</div>
+<div class="resume">${body}</div>
+</body></html>`;
+}
+
+// ── RTF resume for Word ───────────────────────────────────────────────────────
+function resumeToRtf(text) {
+  function isHeader(line) {
+    const t = line.trim();
+    return t.length > 1 && t.length < 60 && t === t.toUpperCase() && /[A-Z]/.test(t) && !/^[•\-\*]/.test(t);
+  }
+  function escRtf(s) {
+    return s.replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+      .replace(/[^\x00-\x7F]/g, c => `\\u${c.charCodeAt(0)}?`);
+  }
+
+  let body = '';
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t)          { body += '\\par\n'; continue; }
+    const e = escRtf(t);
+    if (isHeader(t)) { body += `\\pard\\sb120\\sa40{\\b ${e}}\\par\n`; continue; }
+    if (/^[•\-\*]/.test(t)) { body += `\\pard\\li200\\fi-120 ${e}\\par\n`; continue; }
+    body += `\\pard ${e}\\par\n`;
+  }
+
+  return `{\\rtf1\\ansi\\ansicpg1252\\deff0\n{\\fonttbl{\\f0\\fswiss\\fcharset0 Arial;}}\n\\f0\\fs22\\widowctrl\n${body}}`;
+}
+
+// ── Download resume ───────────────────────────────────────────────────────────
+function downloadResume(id, format) {
+  const app = applications.find(a => a.id === id);
+  if (!app) return;
+  const text     = buildFinalResume(app);
+  const filename = `${app.company}_${app.job_title}`.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
+
+  if (format === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write(resumeToHtml(text));
+    win.document.close();
+  } else {
+    const blob = new Blob([resumeToRtf(text)], { type: 'application/rtf' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename + '.doc'; a.click();
+    URL.revokeObjectURL(url);
+  }
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -242,19 +441,16 @@ async function approve(id) {
   await chrome.runtime.sendMessage({ type:'UPDATE_APP', id, updates:{ status:'approved' } });
   await loadApps();
 }
-
 async function markApplied(id) {
   await chrome.runtime.sendMessage({ type:'UPDATE_APP', id, updates:{ status:'applied', applied_at:Date.now() } });
   await loadApps();
 }
-
 async function skipJob(id) {
   await chrome.runtime.sendMessage({ type:'UPDATE_APP', id, updates:{ status:'skipped' } });
   selectedId = null;
   document.getElementById('main').innerHTML = '<div class="main-empty"><div class="big">✦</div><div>Select a job to review</div></div>';
   await loadApps();
 }
-
 async function deleteJob(id) {
   if (!confirm('Delete this application?')) return;
   await chrome.runtime.sendMessage({ type:'DELETE_APP', id });
@@ -262,26 +458,21 @@ async function deleteJob(id) {
   document.getElementById('main').innerHTML = '<div class="main-empty"><div class="big">✦</div><div>Select a job to review</div></div>';
   await loadApps();
 }
-
 async function retryJob(id) {
   await chrome.runtime.sendMessage({ type:'RETRY_JOB', id });
   await loadApps();
 }
-
 async function saveCoverLetter(id, value) {
   if (!id) return;
   await chrome.runtime.sendMessage({ type:'UPDATE_APP', id, updates:{ cover_letter:value } });
 }
-
 async function regenerateCover(id) {
-  const note  = document.getElementById('regen-note')?.value?.trim() || '';
-  const app   = applications.find(a => a.id === id);
-  const { profile, api_key } = await chrome.storage.local.get(['profile','api_key']);
+  const note = document.getElementById('regen-note')?.value?.trim() || '';
+  const app  = applications.find(a => a.id === id);
+  const { api_key } = await chrome.storage.local.get('api_key');
   const el = document.getElementById('cover-editor');
   if (!el) return;
-  el.value    = 'Regenerating…';
-  el.disabled = true;
-
+  el.value = 'Regenerating…'; el.disabled = true;
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -293,45 +484,38 @@ async function regenerateCover(id) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 1000,
-        system: 'You are an expert cover letter writer. Rewrite based on the instruction. Max 3 short paragraphs. Return ONLY the cover letter text.',
+        max_tokens: 600,
+        system: 'Rewrite the cover letter based on the instruction. Max 3 short paragraphs. Return ONLY the cover letter text.',
         messages: [{ role:'user', content:
-          `Job: ${app.job_title} at ${app.company}\nJD: ${app.raw_jd.slice(0,3000)}\nCurrent: ${app.cover_letter}\nInstruction: ${note||'Make it better'}`
+          `Job: ${app.job_title} at ${app.company}\nJD: ${app.raw_jd.slice(0,2000)}\nCurrent: ${app.cover_letter}\nInstruction: ${note||'Make it better'}`
         }]
       })
     });
-    const data  = await resp.json();
+    const data = await resp.json();
     const newCL = data.content[0].text;
-    el.value    = newCL;
-    el.disabled = false;
+    el.value = newCL; el.disabled = false;
     await chrome.runtime.sendMessage({ type:'UPDATE_APP', id, updates:{ cover_letter:newCL } });
     await loadApps();
   } catch (err) {
-    el.value    = app.cover_letter;
-    el.disabled = false;
+    el.value = app.cover_letter; el.disabled = false;
     alert('Regeneration failed: ' + err.message);
   }
 }
-
 function openJob(id) {
   const app = applications.find(a => a.id === id);
   if (app?.url) chrome.tabs.create({ url: app.url });
 }
-
 function copyToClipboard(elId) {
   const el = document.getElementById(elId);
   if (el) navigator.clipboard.writeText(el.value || el.innerText);
 }
-
-function downloadText(id, type) {
-  const app     = applications.find(a => a.id === id);
+function downloadCover(id) {
+  const app = applications.find(a => a.id === id);
   if (!app) return;
-  const content  = type === 'cover' ? app.cover_letter : app.tailored_resume;
-  const filename = `${app.company}_${app.job_title}_${type}.txt`.replace(/[^\w_.-]/g, '_');
-  const blob     = new Blob([content], { type:'text/plain' });
-  const url      = URL.createObjectURL(blob);
-  const a        = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
+  const blob = new Blob([app.cover_letter || ''], { type:'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `${app.company}_cover.txt`.replace(/[^\w_.-]/g, '_'); a.click();
   URL.revokeObjectURL(url);
 }
 
@@ -349,16 +533,5 @@ function timeAgo(ts) {
   if (d < 86400000) return `${Math.floor(d/3600000)}h ago`;
   return `${Math.floor(d/86400000)}d ago`;
 }
-
-document.getElementById('btn-export-profile').addEventListener('click', async () => {
-  const data = await chrome.storage.local.get(['profile', 'api_key']);
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = 'wingman-backup.json';
-  a.click();
-  URL.revokeObjectURL(url);
-});
 
 init();
