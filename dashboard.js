@@ -288,9 +288,12 @@ function renderChangesTab(app) {
 }
 
 function downloadButtons(id) {
+  const wordLabel = profile.master_resume_docx
+    ? 'Download Word (.docx) — format preserved'
+    : 'Download Word (.doc)';
   return `<div class="download-row">
     <button class="btn btn-dl" data-action="dl-pdf"  data-id="${id}">Save as PDF</button>
-    <button class="btn btn-dl" data-action="dl-word" data-id="${id}">Download Word (.doc)</button>
+    <button class="btn btn-dl" data-action="dl-word" data-id="${id}">${wordLabel}</button>
   </div>`;
 }
 
@@ -417,17 +420,41 @@ function resumeToRtf(text) {
 }
 
 // ── Download resume ───────────────────────────────────────────────────────────
-function downloadResume(id, format) {
-  const app = applications.find(a => a.id === id);
+async function downloadResume(id, format) {
+  const app      = applications.find(a => a.id === id);
   if (!app) return;
-  const text     = buildFinalResume(app);
+  const chgSet   = acceptedChanges.get(id)   || new Set();
+  const addSet   = acceptedAdditions.get(id) || new Set();
+  const accepted = {
+    changes:   (app.changes   || []).filter((_, i) => chgSet.has(i)),
+    additions: (app.additions || []).filter((_, i) => addSet.has(i))
+  };
   const filename = `${app.company}_${app.job_title}`.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
+  const docxB64  = profile.master_resume_docx;
+
+  if (format === 'word' && docxB64) {
+    // Best path: surgical edits on the original DOCX — fonts/layout fully preserved
+    try {
+      const btn = document.querySelector('[data-action="dl-word"]');
+      if (btn) { btn.textContent = 'Building…'; btn.disabled = true; }
+      const modified = await applyChangesToDocx(docxB64, accepted.changes, accepted.additions);
+      await downloadDocx(modified, filename);
+      if (btn) { btn.textContent = 'Download Word (.docx)'; btn.disabled = false; }
+    } catch (err) {
+      alert('DOCX generation failed: ' + err.message);
+    }
+    return;
+  }
+
+  // Fallback: text-based output (PDF upload or no DOCX available)
+  const text = buildFinalResume(app);
 
   if (format === 'pdf') {
     const win = window.open('', '_blank');
     win.document.write(resumeToHtml(text));
     win.document.close();
   } else {
+    // RTF fallback when no original DOCX
     const blob = new Blob([resumeToRtf(text)], { type: 'application/rtf' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
