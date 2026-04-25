@@ -488,7 +488,7 @@ async function downloadResume(id, format) {
       const modified = await applyChangesToDocx(docxB64, accepted.changes, accepted.additions);
       await downloadDocx(modified, filename);
       if (btn) {
-        btn.textContent = 'Download Word (.docx)';
+        btn.textContent = 'Download Word (.docx) — format preserved';
         btn.disabled = false;
       }
     } catch (err) {
@@ -531,6 +531,8 @@ async function skipJob(id) {
 async function deleteJob(id) {
   if (!confirm('Delete this application?')) return;
   await chrome.runtime.sendMessage({ type: 'DELETE_APP', id });
+  acceptedChanges.delete(id);
+  acceptedAdditions.delete(id);
   selectedId = null;
   document.getElementById('main').innerHTML = '<div class="main-empty"><div class="big">✦</div><div>Select a job to review</div></div>';
 }
@@ -547,36 +549,21 @@ async function saveCoverLetter(id, value) {
 async function regenerateCover(id) {
   const note = document.getElementById('regen-note')?.value?.trim() || '';
   const app = applications.find(a => a.id === id);
-  const { api_key } = await chrome.storage.local.get('api_key');
   const el = document.getElementById('cover-editor');
   if (!el) return;
 
   el.value = 'Regenerating…';
   el.disabled = true;
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': api_key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 400,
-        system: 'Rewrite the cover letter based on the instruction. Max 3 short paragraphs. Return ONLY the cover letter text.',
-        messages: [{
-          role: 'user',
-          content: `Job: ${app.job_title} at ${app.company}\nJD: ${(app.raw_jd || '').slice(0, 1800)}\nCurrent: ${app.cover_letter}\nInstruction: ${note || 'Make it better'}`
-        }]
-      })
+    const resp = await chrome.runtime.sendMessage({
+      type: 'REGEN_COVER', id, note,
+      job_title: app.job_title, company: app.company,
+      raw_jd: app.raw_jd, cover_letter: app.cover_letter
     });
-    const data = await resp.json();
-    const newCL = data.content[0].text;
-    el.value = newCL;
+    if (!resp.ok) throw new Error(resp.error);
+    el.value = resp.cover_letter;
     el.disabled = false;
-    await chrome.runtime.sendMessage({ type: 'UPDATE_APP', id, updates: { cover_letter: newCL } });
+    await chrome.runtime.sendMessage({ type: 'UPDATE_APP', id, updates: { cover_letter: resp.cover_letter } });
   } catch (err) {
     el.value = app.cover_letter;
     el.disabled = false;

@@ -383,6 +383,18 @@ Return ONLY valid JSON with no markdown fences:
       return;
     }
 
+    if (msg.type === 'REGEN_COVER') {
+      try {
+        const system = 'Rewrite the cover letter based on the instruction. Max 3 short paragraphs. Return ONLY the cover letter text, no preamble.';
+        const userContent = `Job: ${msg.job_title} at ${msg.company}\nJD: ${(msg.raw_jd || '').slice(0, 2000)}\nCurrent: ${msg.cover_letter}\nInstruction: ${msg.note || 'Make it better'}`;
+        const resp = await callClaude(api_key, [{ role: 'user', content: userContent }], system, 600, MODEL_GENERATE);
+        sendResponse({ ok: true, cover_letter: resp.text });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+      return;
+    }
+
     sendResponse({ ok: false, error: 'Unknown message type' });
   })();
 
