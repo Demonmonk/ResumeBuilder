@@ -2,6 +2,7 @@
 let masterResume  = '';
 let extractedName = '';
 let savedApiKey   = '';
+let docxBase64    = ''; // original DOCX stored for format-preserving downloads
 
 function goTo(step) {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
@@ -77,49 +78,68 @@ fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFileU
 
 async function handleFileUpload(file) {
   showMsg('resume', 'loading', 'Reading file…');
+  docxBase64 = '';
   try {
-    let text;
-    if (file.name.endsWith('.pdf')) {
-      // Send PDF as base64 to Claude directly via background
+    const ext = file.name.split('.').pop().toLowerCase();
+
+    if (ext === 'docx') {
+      // Parse DOCX client-side and keep the original binary for format-preserving output
+      showMsg('resume', 'loading', 'Reading Word document…');
       const b64 = await readFileAsBase64(file);
+      const text = await extractDocxText(b64); // from docx-editor.js
+      if (!text || text.trim().length < 50) throw new Error('Could not extract text from this DOCX file. Try pasting below instead.');
+      docxBase64 = b64; // save for format-preserving downloads
+      showMsg('resume', 'loading', 'Claude is structuring your resume…');
+      const resp = await chrome.runtime.sendMessage({ type:'EXTRACT_RESUME', resumeText: text });
+      if (!resp.ok) throw new Error(resp.error);
+      finishUpload(file.name, resp.data);
+      return;
+    }
+
+    if (ext === 'doc') {
+      // Legacy .doc is binary; we cannot reliably preserve formatting client-side
+      showMsg('resume', 'error', 'Legacy .doc files do not support format-preserving edits. Please upload .docx to preserve formatting exactly.');
+      return;
+    }
+
+    if (ext === 'pdf') {
+      const b64  = await readFileAsBase64(file);
       const resp = await chrome.runtime.sendMessage({ type:'EXTRACT_RESUME_PDF', base64: b64 });
       if (!resp.ok) throw new Error(resp.error);
-      masterResume  = resp.data.master_resume;
-      extractedName = resp.data.name || '';
-      uploadZone.classList.add('done');
-      uploadZone.querySelector('.upload-text').innerHTML = `<strong>✓ ${file.name}</strong><br><small>Resume loaded</small>`;
-      const preview = document.getElementById('resume-preview');
-      preview.textContent = masterResume.slice(0, 800) + (masterResume.length > 800 ? '\n...' : '');
-      preview.style.display = 'block';
-      showMsg('resume', 'success', '✓ Resume extracted and ready');
-      document.getElementById('btn-resume-next').disabled = false;
-      prefillProfile(resp.data);
+      finishUpload(file.name, resp.data);
       return;
-    } else {
-      text = await readFileAsText(file);
-      // Detect binary garbage — if >15% chars are non-printable, it's not readable text
-      const nonPrintable = (text.match(/[\x00-\x08\x0E-\x1F\x7F-\xFF]/g) || []).length;
-      if (nonPrintable / text.length > 0.15) {
-        showMsg('resume', 'error', "Can't read this file as text — it's probably a binary PDF. Use the paste box above instead: open your CV, select all, copy, paste.");
-        return;
-      }
+    }
+
+    // Plain text fallback
+    const text = await readFileAsText(file);
+    const nonPrintable = (text.match(/[\x00-\x08\x0E-\x1F\x7F-\xFF]/g) || []).length;
+    if (text.length > 0 && nonPrintable / text.length > 0.15) {
+      showMsg('resume', 'error', `"${file.name}" is a binary file. Upload a .docx or .pdf instead, or paste your resume below.`);
+      return;
     }
     showMsg('resume', 'loading', 'Claude is structuring your resume…');
     const resp = await chrome.runtime.sendMessage({ type:'EXTRACT_RESUME', resumeText: text });
     if (!resp.ok) throw new Error(resp.error);
-    masterResume  = resp.data.master_resume;
-    extractedName = resp.data.name || '';
-    uploadZone.classList.add('done');
-    uploadZone.querySelector('.upload-text').innerHTML = `<strong>✓ ${file.name}</strong><br><small>Resume loaded</small>`;
-    const preview = document.getElementById('resume-preview');
-    preview.textContent = masterResume.slice(0, 800) + (masterResume.length > 800 ? '\n...' : '');
-    preview.style.display = 'block';
-    showMsg('resume', 'success', '✓ Resume extracted and ready');
-    document.getElementById('btn-resume-next').disabled = false;
-    prefillProfile(resp.data);
+    finishUpload(file.name, resp.data);
+
   } catch (err) {
     showMsg('resume', 'error', `Error: ${err.message}`);
   }
+}
+
+function finishUpload(filename, data) {
+  masterResume  = data.master_resume;
+  extractedName = data.name || '';
+  uploadZone.classList.add('done');
+  uploadZone.querySelector('.upload-text').innerHTML = `<strong>✓ ${filename}</strong><br><small>Resume loaded${docxBase64 ? ' — format preserved ✓' : ''}</small>`;
+  const preview = document.getElementById('resume-preview');
+  preview.textContent = masterResume.slice(0, 800) + (masterResume.length > 800 ? '\n…' : '');
+  preview.style.display = 'block';
+  showMsg('resume', 'success', docxBase64
+    ? '✓ Word doc parsed — your formatting will be preserved on download'
+    : '✓ Resume extracted and ready');
+  document.getElementById('btn-resume-next').disabled = false;
+  prefillProfile(data);
 }
 
 async function parsePastedResume() {
@@ -218,11 +238,13 @@ async function finish() {
 
   const profile = {
     name, email,
-    phone:            document.getElementById('p-phone').value.trim(),
-    linkedin:         document.getElementById('linkedin-url').value.trim(),
-    target_roles:     document.getElementById('p-roles').value.trim(),
-    target_locations: document.getElementById('p-locations').value.trim(),
-    master_resume:    masterResume
+    phone:               document.getElementById('p-phone').value.trim(),
+    linkedin:            document.getElementById('linkedin-url').value.trim(),
+    target_roles:        document.getElementById('p-roles').value.trim(),
+    target_locations:    document.getElementById('p-locations').value.trim(),
+    target_pages:        parseInt(document.getElementById('p-pages').value, 10) || 1,
+    master_resume:       masterResume,
+    master_resume_docx:  docxBase64 || undefined  // stored only when .docx was uploaded
   };
 
   const resp = await chrome.runtime.sendMessage({ type:'SAVE_PROFILE', profile, api_key: savedApiKey });

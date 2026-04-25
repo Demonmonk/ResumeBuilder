@@ -134,7 +134,7 @@ textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
       <div class="or">or upload file</div>
 
       <div class="upload-zone" id="upload-zone">
-        <input type="file" id="resume-file" accept=".pdf,.txt,.doc,.docx">
+        <input type="file" id="resume-file" accept=".pdf,.txt,.docx">
         <div class="upload-icon">📄</div>
         <div class="upload-text"><strong>Drop your CV here</strong> or click to browse<br><small>PDF, Word, or plain text</small></div>
       </div>
@@ -162,6 +162,11 @@ textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
       <div class="field"><label>Phone</label><input type="text" id="p-phone" placeholder="+44 7700 000000"></div>
       <div class="field"><label>Target roles (comma-separated)</label><input type="text" id="p-roles" placeholder="Product Manager, Senior PM, Head of Product"></div>
       <div class="field"><label>Target locations</label><input type="text" id="p-locations" placeholder="London, Dubai, Remote"></div>
+      <div class="field">
+        <label>Resume page limit</label>
+        <input type="number" id="p-pages" min="1" max="5" value="1" placeholder="1">
+        <div style="font-size:11px;color:#555;margin-top:4px">How many pages should your resume be? Claude will keep additions within this limit.</div>
+      </div>
       <div id="profile-msg" class="msg"></div>
       <div class="btn-row">
         <button class="btn btn-ghost" id="btn-profile-back">Back</button>
@@ -185,6 +190,7 @@ textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
 
   </div>
 </div>
+<script src="docx-editor.js"></script>
 <script src="onboarding.js"></script>
 </body>
 </html>

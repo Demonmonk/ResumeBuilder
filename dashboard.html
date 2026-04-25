@@ -244,23 +244,47 @@ body {
 
 .match-item::before { content: '✓'; flex-shrink: 0; }
 
-/* Diff view */
-.diff {
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 12px;
-  line-height: 1.7;
+/* Change cards */
+.change-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
   background: #0c0c14;
   border: 1px solid #1e1e2a;
   border-radius: 10px;
-  padding: 16px;
-  max-height: 480px;
-  overflow-y: auto;
+  padding: 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
 }
+.change-card:hover { border-color: #2a2a3a; }
+.change-card.dimmed { opacity: 0.4; }
+.change-card input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; accent-color: #6366f1; width: 15px; height: 15px; cursor: pointer; }
+.change-body { flex: 1; min-width: 0; }
+.change-section-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: #555; margin-bottom: 7px; display: flex; align-items: center; gap: 6px; }
+.change-original { font-size: 12.5px; color: #f87171; background: #200d0d; border-radius: 5px; padding: 7px 10px; line-height: 1.5; margin-bottom: 4px; }
+.change-arrow { font-size: 11px; color: #444; margin: 3px 0; }
+.change-reason-inline { font-style: italic; color: #444; font-size: 11px; }
+.change-suggested { font-size: 12.5px; color: #4ade80; background: #0d2010; border-radius: 5px; padding: 7px 10px; line-height: 1.5; }
+.addition-reason { font-size: 11px; color: #555; margin-top: 6px; font-style: italic; }
+.type-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 8px; flex-shrink: 0; }
+.badge-reframe { background: #12101f; color: #818cf8; border: 1px solid #2a2060; }
+.badge-new     { background: #0f1f12; color: #4ade80; border: 1px solid #1a3a20; }
 
-.diff-line { padding: 1px 8px; border-radius: 3px; }
-.diff-added   { background: #0d2010; color: #4ade80; }
-.diff-removed { background: #200d0d; color: #f87171; text-decoration: line-through; opacity: 0.7; }
-.diff-same    { color: #555; }
+/* Page estimate */
+.page-ok      { font-size: 12px; color: #555; margin: 16px 0 8px; }
+.page-warning { font-size: 12px; color: #f59e0b; background: #1a1200; border: 1px solid #3a2800; border-radius: 7px; padding: 8px 12px; margin: 16px 0 8px; }
+
+/* Download buttons */
+.download-row { display: flex; gap: 8px; margin-top: 4px; }
+.btn-dl { background: #13131a; color: #e2e2e8; border: 1px solid #2a2a3a; font-size: 12px; padding: 8px 14px; border-radius: 7px; cursor: pointer; font-family: inherit; font-weight: 500; transition: all 0.15s; }
+.btn-dl:hover { border-color: #6366f1; color: #818cf8; }
+
+/* Error box */
+.error-box { padding: 14px; background: #1f0d0d; border: 1px solid #3a1010; border-radius: 10px; color: #f87171; font-size: 13px; }
+
+/* JD text */
+.jd-text { font-size: 13px; color: #666; line-height: 1.8; white-space: pre-wrap; max-height: 480px; overflow-y: auto; background: #0c0c14; padding: 16px; border-radius: 10px; border: 1px solid #1e1e2a; }
 
 /* Cover letter editor */
 .cover-letter-editor {
@@ -342,6 +366,7 @@ body {
     <div class="sidebar-header">
       <div class="logo-mark">W</div>
       <div class="logo-text">Wingman</div>
+      <button id="btn-export-profile" title="Export profile backup (saves your resume + API key so you don't have to re-upload after reloading the extension)" style="margin-left:auto;background:transparent;border:1px solid #1e1e2a;border-radius:6px;color:#555;font-size:11px;padding:4px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">⬇ backup</button>
     </div>
 
     <div class="sidebar-filters">
@@ -367,6 +392,7 @@ body {
 
 </div>
 
+<script src="docx-editor.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>
