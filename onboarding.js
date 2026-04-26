@@ -247,7 +247,9 @@ async function finish() {
     master_resume_docx:  docxBase64 || undefined  // stored only when .docx was uploaded
   };
 
-  const resp = await chrome.runtime.sendMessage({ type:'SAVE_PROFILE', profile, api_key: savedApiKey });
+  // If user didn't go through the API key step this session, preserve the stored key
+  const keyToSave = savedApiKey || (await chrome.storage.local.get('api_key')).api_key || '';
+  const resp = await chrome.runtime.sendMessage({ type:'SAVE_PROFILE', profile, api_key: keyToSave });
   if (resp.ok) { goTo('done'); }
   else { showMsg('profile', 'error', 'Could not save. Try again.'); }
 }
