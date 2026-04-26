@@ -80,11 +80,24 @@ async function callClaude(apiKey, messages, system, maxTokens = 4096, model = MO
     messages.some(m => Array.isArray(m.content) && m.content.some(b => b.cache_control));
   if (hasCacheControl) headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
 
-  const resp = await fetch(CLAUDE_API, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages })
-  });
+  // 90s hard timeout — Chrome MV3 service workers can be killed around 5 min,
+  // but we want to surface an error quickly rather than hang indefinitely.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90_000);
+
+  let resp;
+  try {
+    resp = await fetch(CLAUDE_API, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages }),
+      signal: controller.signal
+    });
+  } catch (err) {
+    throw new Error(err.name === 'AbortError' ? 'Request timed out after 90 s — retry' : err.message);
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -239,6 +252,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         signature,
         status: 'processing',
         saved_at: Date.now(),
+        processing_started_at: Date.now(),
         token_estimate: {
           input_tokens: approxTokens(payload.raw_jd) + 800,
           output_tokens: 0,
@@ -257,6 +271,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     if (msg.type === 'GET_APPS') {
       const { applications = [] } = await chrome.storage.local.get('applications');
+      // Rescue jobs stuck in processing — happens when the service worker is killed
+      // mid-call (Chrome MV3 SW lifetime limit). Mark them as error so user can retry.
+      const STUCK_MS = 3 * 60 * 1000;
+      const stuck = applications.filter(
+        a => a.status === 'processing' &&
+          (Date.now() - (a.processing_started_at || a.saved_at)) > STUCK_MS
+      );
+      if (stuck.length) {
+        stuck.forEach(a => {
+          a.status = 'error';
+          a.error = 'Processing timed out — click Retry';
+        });
+        await chrome.storage.local.set({ applications });
+        await updateBadge();
+      }
       sendResponse({ ok: true, applications });
       return;
     }
@@ -289,6 +318,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const idx = applications.findIndex(a => a.id === msg.id);
       if (idx !== -1) {
         applications[idx].status = 'processing';
+        applications[idx].processing_started_at = Date.now();
         delete applications[idx].error;
         await chrome.storage.local.set({ applications });
         await updateBadge();
